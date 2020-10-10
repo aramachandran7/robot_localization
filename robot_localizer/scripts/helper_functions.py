@@ -105,6 +105,7 @@ class TFHelper(object):
 
     def send_last_map_to_odom_transform(self):
         if not(hasattr(self, 'translation') and hasattr(self, 'rotation')):
+            print("NO TRANSLATION or ROTATION")
             return
         self.tf_broadcaster.sendTransform(self.translation,
                                           self.rotation,
