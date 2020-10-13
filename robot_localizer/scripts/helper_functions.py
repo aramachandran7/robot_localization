@@ -89,19 +89,23 @@ class TFHelper(object):
             type rospy.Time and represents the time at which the robot's pose
             corresponds.
             """
+
         (translation, rotation) = \
             self.convert_pose_inverse_transform(robot_pose)
         p = PoseStamped(
             pose=self.convert_translation_rotation_to_pose(translation,
                                                            rotation),
             header=Header(stamp=timestamp, frame_id='base_link'))
+        print("Waiting for transform")
         self.tf_listener.waitForTransform('base_link',
                                           'odom',
                                           timestamp,
                                           rospy.Duration(1.0))
+        print("Moving along")
         self.odom_to_map = self.tf_listener.transformPose('odom', p)
         (self.translation, self.rotation) = \
             self.convert_pose_inverse_transform(self.odom_to_map.pose)
+        print("done with fix map to odom")
 
     def send_last_map_to_odom_transform(self):
         if not(hasattr(self, 'translation') and hasattr(self, 'rotation')):
