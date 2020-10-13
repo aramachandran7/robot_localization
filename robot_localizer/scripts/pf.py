@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 
 """ This is the starter code for the robot localization project """
-import random
-
 import rospy
 
 from std_msgs.msg import Header, String
 from sensor_msgs.msg import LaserScan, PointCloud
 from helper_functions import TFHelper
+import random
 
 from occupancy_field import OccupancyField
-from sensor_msgs.msg import LaserScan, PointCloud
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, PoseArray, Pose, Point, Quaternion
+from tf.transformations import euler_from_quaternion, rotation_matrix, quaternion_from_matrix
 
 import tf
+import math
 from tf import TransformListener
 from tf import TransformBroadcaster
 
@@ -46,6 +46,7 @@ class ParticleFilter(object):
         self.base_frame = "base_link"  # the frame of the robot base
         self.map_frame = "map"  # the name of the map coordinate frame
         self.odom_frame = "odom"  # the name of the odometry coordinate frame
+        self.scan_topic = "scan"  # the topic where we will get laser scans from
 
         # pose_listener responds to selection of a new approximate robot
         # location (for instance using rviz)
@@ -53,10 +54,10 @@ class ParticleFilter(object):
                          PoseWithCovarianceStamped,
                          self.update_initial_pose)
 
-        # publisher for the particle cloud for visualizing in rviz.
-        self.particle_pub = rospy.Publisher("particlecloud",
-                                            PoseArray,
-                                            queue_size=10)
+        # enable listening for and broadcasting coordinate transforms
+        self.tf_listener = TransformListener()
+        self.tf_broadcaster = TransformBroadcaster()
+
         # laser_subscriber listens for data from the lidar
         #rospy.Subscriber(self.scan_topic, LaserScan, self.scan_received)
 
@@ -76,7 +77,7 @@ class ParticleFilter(object):
         # Use the helper functions to fix the transform
     def initialize_particle_cloud(self, timestamp, xy_theta):
         #self.particle_cloud = []
-        angle_variance = 10  # POint the points in the general direction of the robot
+        angle_variance = math.pi/12  # POint the points in the general direction of the robot
         x_cur = xy_theta[0]
         y_cur = xy_theta[1]
         theta_cur = xy_theta[2]
@@ -90,6 +91,8 @@ class ParticleFilter(object):
             self.particle_cloud.append(new_particle)
         print("Done initializing particles")
         self.normalize_particles()
+        # publish particles (so things like rviz can see them)
+        self.publish_particles()
         print("normalized correctly")
         self.update_robot_pose(timestamp)
         print("updated robot pose")
@@ -116,21 +119,21 @@ class ParticleFilter(object):
         print(timestamp)
         self.transform_helper.fix_map_to_odom_transform(self.robot_pose, timestamp)
         print("Done fixing map to odom")
+
     def publish_particles(self):
         # Publish the particles so that one can see them in RVIZ
         # Convert the particles from xy_theta to pose!!
         pose_particle_cloud = []
         for p in self.particle_cloud:
-            pose_particle_cloud.append(p.asPose())
+            pose_particle_cloud.append(p.as_pose())
         self.particle_pub.publish(PoseArray(header=Header(stamp=rospy.Time.now(),
                                             frame_id=self.map_frame),
                                   poses=pose_particle_cloud))
 
     def run(self):
         r = rospy.Rate(5)
-
+        print("Nathan and Adi ROS Loop code is starting!!!")
         while not(rospy.is_shutdown()):
-            print("Nathan and Adi ROS Loop code is starting!!!")
             # in the main loop all we do is continuously broadcast the latest
             # map to odom transform
             self.transform_helper.send_last_map_to_odom_transform()
