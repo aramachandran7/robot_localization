@@ -81,13 +81,13 @@ class ParticleFilter(object):
         angle_variance = math.pi/12  # POint the points in the general direction of the robot
         x_cur = xy_theta[0]
         y_cur = xy_theta[1]
-        theta_cur = xy_theta[2]
+        theta_cur = self.transform_helper.angle_normalize(xy_theta[2])
         print("theta_cur: ", theta_cur)
         for i in range(self.num_particles):
             # Generate values for and add a new particle!!
             x_rel = random.uniform(-.5, .5)
             y_rel = random.uniform(-.5, .5)
-            new_theta = (random.uniform(theta_cur-angle_variance, theta_cur+angle_variance) % (2*math.pi))
+            new_theta = (random.uniform(theta_cur-angle_variance, theta_cur+angle_variance))
             # TODO: Could use a tf transform to add x and y in the robot's coordinate system
             new_particle = Particle(x_cur+x_rel, y_cur+y_rel, new_theta)
             self.particle_cloud.append(new_particle)
@@ -126,11 +126,8 @@ class ParticleFilter(object):
             total_y += p.y * p.w
             total_theta += p.theta * p.w
             print("theta", p.theta)
-        average_wparticle = (total_x/self.num_particles, 
-                            total_y/self.num_particles, 
-                            total_theta/self.num_particles)
         print("total xytheta: ", total_x, total_y, total_theta)
-        print("avg weightedparticle: ", average_wparticle)
+        
         # passing average particle position into pose
         self.robot_pose = Pose()
         print("set robot pose to", self.robot_pose)
@@ -148,7 +145,7 @@ class ParticleFilter(object):
                                             frame_id=self.map_frame),
                                   poses=pose_particle_cloud))
 
-    def resample_particles():
+    def resample_particles(self):
         pass 
 
     def run(self):
