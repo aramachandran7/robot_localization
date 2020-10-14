@@ -77,16 +77,17 @@ class ParticleFilter(object):
 
         # Use the helper functions to fix the transform
     def initialize_particle_cloud(self, timestamp, xy_theta):
-        #self.particle_cloud = []
+        self.particle_cloud = []
         angle_variance = math.pi/12  # POint the points in the general direction of the robot
         x_cur = xy_theta[0]
         y_cur = xy_theta[1]
         theta_cur = xy_theta[2]
+        print("theta_cur: ", theta_cur)
         for i in range(self.num_particles):
             # Generate values for and add a new particle!!
             x_rel = random.uniform(-.5, .5)
             y_rel = random.uniform(-.5, .5)
-            new_theta = abs(random.uniform(theta_cur-angle_variance, theta_cur+angle_variance) % 360)
+            new_theta = (random.uniform(theta_cur-angle_variance, theta_cur+angle_variance) % (2*math.pi))
             # TODO: Could use a tf transform to add x and y in the robot's coordinate system
             new_particle = Particle(x_cur+x_rel, y_cur+y_rel, new_theta)
             self.particle_cloud.append(new_particle)
@@ -105,9 +106,9 @@ class ParticleFilter(object):
             for i in self.particle_cloud: i.w = i.w/total_weights
 
     def update_robot_pose(self, timestamp):
-        """ Update the estimate of the robot's pose given the updated particles.
+        """ Update the estimate of the robot's pose in the map frame given the updated particles.
             There are two logical methods for this:
-                (1): compute the mean pose
+                (1): compute the mean pose based on all the high weight particles
                 (2): compute the most likely pose (i.e. the mode of the distribution)
         """
         # first make sure that the particle weights are normalized
@@ -115,6 +116,22 @@ class ParticleFilter(object):
         print("Normalized particles in update robot pose")
         # TODO: assign the latest pose into self.robot_pose as a geometry_msgs.Pose object
         # just to get started we will fix the robot's pose to always be at the origin
+
+        total_x = 0
+        total_y = 0
+        total_theta = 0
+        # walk through all particles 
+        for p in self.particle_cloud:
+            total_x += p.x * p.w
+            total_y += p.y * p.w
+            total_theta += p.theta * p.w
+            print("theta", p.theta)
+        average_wparticle = (total_x/self.num_particles, 
+                            total_y/self.num_particles, 
+                            total_theta/self.num_particles)
+        print("total xytheta: ", total_x, total_y, total_theta)
+        print("avg weightedparticle: ", average_wparticle)
+        # passing average particle position into pose
         self.robot_pose = Pose()
         print("set robot pose to", self.robot_pose)
         print(timestamp)
@@ -130,6 +147,9 @@ class ParticleFilter(object):
         self.particle_pub.publish(PoseArray(header=Header(stamp=rospy.Time.now(),
                                             frame_id=self.map_frame),
                                   poses=pose_particle_cloud))
+
+    def resample_particles():
+        pass 
 
     def run(self):
         r = rospy.Rate(5)
