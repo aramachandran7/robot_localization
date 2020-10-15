@@ -41,7 +41,10 @@ class ParticleFilter(object):
     """
     def __init__(self):
         rospy.init_node('pf')
-        self.num_particles = 300
+        self.initialized = False
+        self.num_particles = 1
+        self.d_thresh = 0.2  # the amount of linear movement before performing an update
+        self.a_thresh = math.pi / 6  # the amount of angular movement before performing an update
         self.particle_cloud = []
         self.lidar_grab_range = 30
         self.lidar_points = []
@@ -63,12 +66,14 @@ class ParticleFilter(object):
         self.tf_broadcaster = TransformBroadcaster()
 
         # laser_subscriber listens for data from the lidar
-        #rospy.Subscriber(self.scan_topic, LaserScan, self.scan_received)
+        rospy.Subscriber(self.scan_topic, LaserScan, self.scan_received)
 
         # create instances of two helper objects that are provided to you
         # as part of the project
+        self.current_odom_xy_theta = []
         self.occupancy_field = OccupancyField()
         self.transform_helper = TFHelper()
+        self.initialized = True
 
     def update_initial_pose(self, msg):
         """ Callback function to handle re-initializing the particle filter based on a pose estimate.
@@ -189,19 +194,37 @@ class ParticleFilter(object):
             delta = (new_odom_xy_theta[0] - self.current_odom_xy_theta[0],
                      new_odom_xy_theta[1] - self.current_odom_xy_theta[1],
                      new_odom_xy_theta[2] - self.current_odom_xy_theta[2])
-            
+
+            delta_pose = Particle(delta[0], delta[1], delta[2]).as_pose()
+            # find out where the robot thinks it is based on its odometry
+            p = PoseStamped(header=Header(stamp=msg.header.stamp,
+                                          frame_id=self.odom_frame),
+                            pose=delta_pose)
+            # self.delta_map_pose = self.tf_listener.transformPose(self.map_frame, p)
+            # # store the the odometry pose in a more convenient format (x,y,theta)
+            # converted_pose = self.transform_helper.convert_pose_to_xy_and_theta(self.delta_map_pose.pose)
+
+            print("Robot was at:")
+            print(self.current_odom_xy_theta)
+            print("Now the robot is at: ")
+            print(new_odom_xy_theta)
+            print("moved x: ", delta[0])
+            print("moved y: ", delta[1])
+            print("moved *: ", delta[2])
+            print(self.particle_cloud[0].x, self.particle_cloud[0].y,self.particle_cloud[0].theta)
+            # print(converted_pose)
             self.current_odom_xy_theta = new_odom_xy_theta
         else:
             self.current_odom_xy_theta = new_odom_xy_theta
             return
         for p in self.particle_cloud:
-            p.x += delta[0]
-            p.y += delta[1]
+            # Subtract since Odom is inverted from map
+            p.x += delta[0] * math.cos(p.theta) + delta[1] * math.sin(p.theta)
+            p.y += delta[0] * math.sin(p.theta) + delta[1] * math.cos(p.theta)
             p.theta += delta[2]
-
-        # TODO: modify particles using delta
-    
-    
+        print("Particle has moved to: ")
+        print(self.particle_cloud[0].x, self.particle_cloud[0].y, self.particle_cloud[0].theta)
+        self.current_odom_xy_theta = new_odom_xy_theta
 
     def scan_received(self, msg): 
         """
@@ -252,16 +275,14 @@ class ParticleFilter(object):
               math.fabs(new_odom_xy_theta[2] - self.current_odom_xy_theta[2]) > self.a_thresh):
             # we have moved far enough to do an update!
             self.update_particles_with_odom(msg)    # update based on odometry
-            if self.last_projected_stable_scan:
-                last_projected_scan_timeshift = deepcopy(self.last_projected_stable_scan)
-                last_projected_scan_timeshift.header.stamp = msg.header.stamp
-                self.scan_in_base_link = self.tf_listener.transformPointCloud("base_link", last_projected_scan_timeshift)
+            print("UPDATED PARTICLES VIA ODOM")
+        #
+        #     self.update_particles_with_laser(msg)   # update based on laser scan
+        #    self.update_robot_pose(msg.header.stamp)                # update robot's pose
+        #     self.resample_particles()               # resample particles to focus on areas of high density
+        # # publish particles (so things like rviz can see them)
+        self.publish_particles()
 
-            self.update_particles_with_laser(msg)   # update based on laser scan
-            self.update_robot_pose(msg.header.stamp)                # update robot's pose
-            self.resample_particles()               # resample particles to focus on areas of high density
-        # publish particles (so things like rviz can see them)
-        self.publish_particles(msg)
 
     def run(self):
         r = rospy.Rate(5)
