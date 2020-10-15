@@ -196,32 +196,45 @@ class ParticleFilter(object):
                      new_odom_xy_theta[2] - self.current_odom_xy_theta[2])
 
             delta_pose = Particle(delta[0], delta[1], delta[2]).as_pose()
-            # find out where the robot thinks it is based on its odometry
-            p = PoseStamped(header=Header(stamp=msg.header.stamp,
-                                          frame_id=self.odom_frame),
-                            pose=delta_pose)
+
             # self.delta_map_pose = self.tf_listener.transformPose(self.map_frame, p)
             # # store the the odometry pose in a more convenient format (x,y,theta)
             # converted_pose = self.transform_helper.convert_pose_to_xy_and_theta(self.delta_map_pose.pose)
-
-            print("Robot was at:")
-            print(self.current_odom_xy_theta)
-            print("Now the robot is at: ")
-            print(new_odom_xy_theta)
-            print("moved x: ", delta[0])
-            print("moved y: ", delta[1])
-            print("moved *: ", delta[2])
-            print(self.particle_cloud[0].x, self.particle_cloud[0].y,self.particle_cloud[0].theta)
+            #
+            # print("Robot was at:")
+            # print(self.current_odom_xy_theta)
+            # print("Now the robot is at: ")
+            # print(new_odom_xy_theta)
+            # print("moved x: ", delta[0])
+            # print("moved y: ", delta[1])
+            # print("moved *: ", delta[2])
+            # print(self.particle_cloud[0].x, self.particle_cloud[0].y,self.particle_cloud[0].theta)
             # print(converted_pose)
+            ang_of_dest = math.atan(delta[1]/delta[0])
+
+            ang_to_dest = self.transform_helper.angle_diff(self.current_odom_xy_theta[2], ang_of_dest)
+            print("Curr", self.current_odom_xy_theta[2], "Dest",ang_of_dest)
+            print(ang_to_dest)
+            d = math.sqrt(delta[0]**2 + delta[1]**2)
+
+
+
             self.current_odom_xy_theta = new_odom_xy_theta
         else:
             self.current_odom_xy_theta = new_odom_xy_theta
             return
         for p in self.particle_cloud:
             # Subtract since Odom is inverted from map
-            p.x += delta[0] * math.cos(p.theta) + delta[1] * math.sin(p.theta)
-            p.y += delta[0] * math.sin(p.theta) + delta[1] * math.cos(p.theta)
+
+            # Add first rotation
+            phi = p.theta+ang_to_dest
+            p.x += math.cos(phi) * d
+            p.y += math.sin(phi) * d
             p.theta += delta[2]
+
+            # p.x += delta[0] * math.cos(p.theta) - delta[1] * math.sin(p.theta)
+            # p.y += delta[0] * math.sin(p.theta) + delta[1] * math.cos(p.theta)
+            # p.theta += delta[2]
         print("Particle has moved to: ")
         print(self.particle_cloud[0].x, self.particle_cloud[0].y, self.particle_cloud[0].theta)
         self.current_odom_xy_theta = new_odom_xy_theta
