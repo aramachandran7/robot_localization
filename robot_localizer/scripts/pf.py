@@ -42,7 +42,7 @@ class ParticleFilter(object):
     def __init__(self):
         rospy.init_node('pf')
         self.initialized = False
-        self.num_particles = 1
+        self.num_particles = 100
         self.d_thresh = 0.2  # the amount of linear movement before performing an update
         self.a_thresh = math.pi / 6  # the amount of angular movement before performing an update
         self.particle_cloud = []
@@ -210,12 +210,15 @@ class ParticleFilter(object):
             # print("moved *: ", delta[2])
             # print(self.particle_cloud[0].x, self.particle_cloud[0].y,self.particle_cloud[0].theta)
             # print(converted_pose)
-            ang_of_dest = math.atan(delta[1]/delta[0])
+            ang_of_dest = math.atan2(delta[1], delta[0])
 
             ang_to_dest = self.transform_helper.angle_diff(self.current_odom_xy_theta[2], ang_of_dest)
+            print("moved x: ", delta[0])
+            print("moved y: ", delta[1])
             print("Curr", self.current_odom_xy_theta[2], "Dest",ang_of_dest)
-            print(ang_to_dest)
+            print("ANGLE TO TURN: ",ang_to_dest, "\n")
             d = math.sqrt(delta[0]**2 + delta[1]**2)
+            print("Distance: ", d)
 
 
 
@@ -228,15 +231,14 @@ class ParticleFilter(object):
 
             # Add first rotation
             phi = p.theta+ang_to_dest
+            print("phi", phi)
             p.x += math.cos(phi) * d
             p.y += math.sin(phi) * d
-            p.theta += delta[2]
+            p.theta += self.transform_helper.angle_normalize(delta[2])
 
             # p.x += delta[0] * math.cos(p.theta) - delta[1] * math.sin(p.theta)
             # p.y += delta[0] * math.sin(p.theta) + delta[1] * math.cos(p.theta)
             # p.theta += delta[2]
-        print("Particle has moved to: ")
-        print(self.particle_cloud[0].x, self.particle_cloud[0].y, self.particle_cloud[0].theta)
         self.current_odom_xy_theta = new_odom_xy_theta
 
     def scan_received(self, msg): 

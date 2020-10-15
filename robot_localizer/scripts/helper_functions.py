@@ -78,6 +78,7 @@ class TFHelper(object):
         if math.fabs(d1) < math.fabs(d2):
             return d1
         else:
+            test = (math.pi - math.fabs(a)) + (math.pi-b)
             return d2
 
     def fix_map_to_odom_transform(self, robot_pose, timestamp):
