@@ -116,11 +116,13 @@ class ParticleFilter(object):
         """
         # walk through all particles, set weight based off distance to closest obstacle vs distance to closest lidar point
         for p in self.particle_cloud:
-            closest = self.occupancy_field.get_closest_obstacle_distance(p.x, p.y)
-            # TODO handle NaN return
-            print("closest from occ_field: ", closest)
-            p.w = 1 / self.calculate_min_distance(closest)
-            print(p.w)
+            for lp in self.lidar_points:
+                
+                closest = self.occupancy_field.get_closest_obstacle_distance(p.x, p.y)
+                # TODO handle NaN return
+                print("closest from occ_field: ", closest)
+                p.w = 1 / self.calculate_min_distance(closest)
+                print(p.w)
 
     def calculate_min_distance(self, closest):
         """
@@ -173,13 +175,93 @@ class ParticleFilter(object):
     def resample_particles(self):
         pass 
 
+    def update_particles_with_odom(self, msg):
+        """ Update the particles using the newly given odometry pose.
+            The function computes the value delta which is a tuple (x,y,theta)
+            that indicates the change in position and angle between the odometry
+            when the particles were last updated and the current odometry.
+            msg: this is not really needed to implement this, but is here just in case.
+        """
+        new_odom_xy_theta = self.transform_helper.convert_pose_to_xy_and_theta(self.odom_pose.pose)
+        # compute the change in x,y,theta since our last update
+        if self.current_odom_xy_theta:
+            old_odom_xy_theta = self.current_odom_xy_theta
+            delta = (new_odom_xy_theta[0] - self.current_odom_xy_theta[0],
+                     new_odom_xy_theta[1] - self.current_odom_xy_theta[1],
+                     new_odom_xy_theta[2] - self.current_odom_xy_theta[2])
+            
+            self.current_odom_xy_theta = new_odom_xy_theta
+        else:
+            self.current_odom_xy_theta = new_odom_xy_theta
+            return
+        for p in self.particle_cloud:
+            p.x += delta[0]
+            p.y += delta[1]
+            p.theta += delta[2]
+
+        # TODO: modify particles using delta
+    
+    
+
     def scan_received(self, msg): 
         """
         Callback to recieve laser scan - should pass data into global scan object
         """
         # self.lidar_points = msg.ranges[-self.lidar_grab_range:]
         # self.lidar_points.extend(msg.ranges[:self.lidar_grab_range])
-        self.closest_lidar = (min(msg.ranges), argmin(msg.ranges))
+        # self.calculate_weights()
+        # self.closest_lidar = (min(msg.ranges), argmin(msg.ranges))
+        """ This is the default logic for what to do when processing scan data.
+            Feel free to modify this, however, we hope it will provide a good
+            guide.  The input msg is an object of type sensor_msgs/LaserScan """
+        if not(self.initialized):
+            # wait for initialization to complete
+            return
+
+        if not(self.tf_listener.canTransform(self.base_frame, msg.header.frame_id, msg.header.stamp)):
+            # need to know how to transform the laser to the base frame
+            # this will be given by either Gazebo or neato_node
+            return
+
+        if not(self.tf_listener.canTransform(self.base_frame, self.odom_frame, msg.header.stamp)):
+            # need to know how to transform between base and odometric frames
+            # this will eventually be published by either Gazebo or neato_node
+            return
+
+        # calculate pose of laser relative to the robot base
+        p = PoseStamped(header=Header(stamp=rospy.Time(0),
+                                      frame_id=msg.header.frame_id))
+        self.laser_pose = self.tf_listener.transformPose(self.base_frame, p)
+
+        # find out where the robot thinks it is based on its odometry
+        p = PoseStamped(header=Header(stamp=msg.header.stamp,
+                                      frame_id=self.base_frame),
+                        pose=Pose())
+        self.odom_pose = self.tf_listener.transformPose(self.odom_frame, p)
+        # store the the odometry pose in a more convenient format (x,y,theta)
+        new_odom_xy_theta = self.transform_helper.convert_pose_to_xy_and_theta(self.odom_pose.pose)
+        if not self.current_odom_xy_theta:
+            self.current_odom_xy_theta = new_odom_xy_theta
+            return
+
+        if not(self.particle_cloud):
+            # now that we have all of the necessary transforms we can update the particle cloud
+            self.initialize_particle_cloud(msg.header.stamp)
+        elif (math.fabs(new_odom_xy_theta[0] - self.current_odom_xy_theta[0]) > self.d_thresh or
+              math.fabs(new_odom_xy_theta[1] - self.current_odom_xy_theta[1]) > self.d_thresh or
+              math.fabs(new_odom_xy_theta[2] - self.current_odom_xy_theta[2]) > self.a_thresh):
+            # we have moved far enough to do an update!
+            self.update_particles_with_odom(msg)    # update based on odometry
+            if self.last_projected_stable_scan:
+                last_projected_scan_timeshift = deepcopy(self.last_projected_stable_scan)
+                last_projected_scan_timeshift.header.stamp = msg.header.stamp
+                self.scan_in_base_link = self.tf_listener.transformPointCloud("base_link", last_projected_scan_timeshift)
+
+            self.update_particles_with_laser(msg)   # update based on laser scan
+            self.update_robot_pose(msg.header.stamp)                # update robot's pose
+            self.resample_particles()               # resample particles to focus on areas of high density
+        # publish particles (so things like rviz can see them)
+        self.publish_particles(msg)
 
     def run(self):
         r = rospy.Rate(5)
