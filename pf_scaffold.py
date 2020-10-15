@@ -249,7 +249,7 @@ class ParticleFilter:
             # this will eventually be published by either Gazebo or neato_node
             return
 
-        # calculate pose of laser relative to the robot base
+        # calculate pose of laser relative to the projectedrobot base
         p = PoseStamped(header=Header(stamp=rospy.Time(0),
                                       frame_id=msg.header.frame_id))
         self.laser_pose = self.tf_listener.transformPose(self.base_frame, p)
