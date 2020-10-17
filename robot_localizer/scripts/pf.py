@@ -16,7 +16,7 @@ import tf
 import math
 from tf import TransformListener
 from tf import TransformBroadcaster
-from numpy import argmin
+from numpy import argmin, argmax, isnan, deg2rad
 
 class Particle(object):
     def __init__(self,x=0.0,y=0.0,theta=0.0,w=1.0):
@@ -45,6 +45,7 @@ class ParticleFilter(object):
         self.num_particles = 100
         self.d_thresh = 0.2  # the amount of linear movement before performing an update
         self.a_thresh = math.pi / 6  # the amount of angular movement before performing an update
+        self.w_thresh = .2 # the minimum weight required for a particle to be 'kept' 
         self.particle_cloud = []
         self.lidar_grab_range = 30
         self.lidar_points = []
@@ -54,6 +55,7 @@ class ParticleFilter(object):
         self.map_frame = "map"  # the name of the map coordinate frame
         self.odom_frame = "odom"  # the name of the odometry coordinate frame
         self.scan_topic = "scan"  # the topic where we will get laser scans from
+        self.best_guess = (None, None) # (index of particle with highest weight, its weight)
 
         # pose_listener responds to selection of a new approximate robot
         # location (for instance using rviz)
@@ -115,26 +117,19 @@ class ParticleFilter(object):
         if total_weights != 1.0:
             for i in self.particle_cloud: i.w = i.w/total_weights
 
-    def calculate_weights(self):    
-        """
-        Calculate particle weights based off of euclidean distance  
-        """
-        # walk through all particles, set weight based off distance to closest obstacle vs distance to closest lidar point
-        for p in self.particle_cloud:
-            for lp in self.lidar_points:
+    # def calculate_weights(self):    
+    #     """
+    #     Calculate particle weights based off of euclidean distance  
+    #     """
+    #     # walk through all particles, set weight based off distance to closest obstacle vs distance to closest lidar point
+    #     for p in self.particle_cloud:
+    #         for lp in self.lidar_points:
                 
-                closest = self.occupancy_field.get_closest_obstacle_distance(p.x, p.y)
-                # TODO handle NaN return
-                print("closest from occ_field: ", closest)
-                p.w = 1 / self.calculate_min_distance(closest)
-                print(p.w)
-
-    def calculate_min_distance(self, closest):
-        """
-        calculate distance from closest obstacle to self.min_lidar_point
-        """
-        pass
-                
+    #             closest = self.occupancy_field.get_closest_obstacle_distance(p.x, p.y)
+    #             # TODO handle NaN return
+    #             print("closest from occ_field: ", closest)
+    #             p.w = 1 / self.calculate_min_distance(closest)
+    #             print(p.w)                
 
     def update_robot_pose(self, timestamp):
         """ Update the estimate of the robot's pose in the map frame given the updated particles.
@@ -177,9 +172,7 @@ class ParticleFilter(object):
                                             frame_id=self.map_frame),
                                   poses=pose_particle_cloud))
 
-    def resample_particles(self):
-        pass 
-
+    
     def update_particles_with_odom(self, msg):
         """ Update the particles using the newly given odometry pose.
             The function computes the value delta which is a tuple (x,y,theta)
@@ -210,8 +203,10 @@ class ParticleFilter(object):
             # print("moved *: ", delta[2])
             # print(self.particle_cloud[0].x, self.particle_cloud[0].y,self.particle_cloud[0].theta)
             # print(converted_pose)
-            ang_of_dest = math.atan2(delta[1], delta[0])
 
+            # calculate difference in angle between new and old robot pos
+            ang_of_dest = math.atan2(delta[1], delta[0]) 
+            # calculate angle needed to turn in angle_to_dest
             ang_to_dest = self.transform_helper.angle_diff(self.current_odom_xy_theta[2], ang_of_dest)
             print("moved x: ", delta[0])
             print("moved y: ", delta[1])
@@ -226,12 +221,13 @@ class ParticleFilter(object):
         else:
             self.current_odom_xy_theta = new_odom_xy_theta
             return
-        for p in self.particle_cloud:
-            # Subtract since Odom is inverted from map
 
-            # Add first rotation
+        # TODO: Incorportate noise into movement.
+        for p in self.particle_cloud:
+            # compute phi, or basically the angle from 0 that the particle 
+            # needs to be moving - phi equals OG diff angle - robot angle + OG partilce angle
             phi = p.theta+ang_to_dest
-            print("phi", phi)
+            # print("phi", phi)
             p.x += math.cos(phi) * d
             p.y += math.sin(phi) * d
             p.theta += self.transform_helper.angle_normalize(delta[2])
@@ -240,6 +236,66 @@ class ParticleFilter(object):
             # p.y += delta[0] * math.sin(p.theta) + delta[1] * math.cos(p.theta)
             # p.theta += delta[2]
         self.current_odom_xy_theta = new_odom_xy_theta
+
+    def update_particles_with_laser(self, msg):
+        # calculate particle weights based off laser scan data passed into param
+        # lidar_points = msg.ranges # array of 361 long
+        # print("len lidar points: ", len(lidar_points))
+        # the particles posese are in __ frame          
+        # the lidar is in __ frame
+        # run the point against occupancy field to find the closest obstacle 
+        # 
+        # 
+
+        # handle case where lidar points are empty  
+        if all(isnan(v) for v in msg.ranges):
+            return 
+        lidar_points = list(filter((0.0).__ne__, msg.ranges))
+        print(lidar_points)
+        closest_lidar = (argmin(lidar_points),deg2rad(argmin(lidar_points)), min(lidar_points))
+        weights = []
+        for p in self.particle_cloud:
+            # do we need to compute particle pos in diff frame? 
+            closest_occ = self.occupancy_field.get_closest_obstacle_distance(p.x, p.y)
+
+            # print("closest occ: ", closest_occ, "deg, rad, closest_val:", closest_lidar)
+
+            # assign weights based off of difference from closest values
+            weights.append(1/abs(closest_lidar[1]-closest_occ))
+
+
+        weights = list(map((lambda x: x/sum(weights)), weights))
+        # you could do the below in 1 line
+        i = 0
+        for p in self.particle_cloud: 
+            p.w = weights[i]
+            i += 1
+
+        # setting up some vars for the future
+        self.w_thresh = sum(weights)/len(weights) * 1.2 # calculate a new weight threshold
+        self.best_guess = (argmax(weights), max(weights)) # (index of particle with highest weight, its weight)
+        print(self.best_guess)
+
+        
+    def resample_particles(self):
+        """
+        Re initialize particles in self.particle_cloud 
+        based on weightages
+        """
+        x_best_guess = self.particle_cloud[self.best_guess[0]].x
+        y_best_guess = self.particle_cloud[self.best_guess[0]].y
+        theta_best_guess = self.particle_cloud[self.best_guess[0]].theta
+        for p in self.particle_cloud: 
+            # recreate particle and incorporate noise if
+            # it's weight is less than threshold 
+            if p.w > self.w_thresh: 
+                continue
+            else: 
+                # TODO: recreate around max particle vals but introduce noise
+                p = Particle(x=x_best_guess,y=y_best_guess,theta=theta_best_guess,w=0.0)
+                
+
+        self.normalize_particles() # clear all weights? not actually useful
 
     def scan_received(self, msg): 
         """
@@ -275,16 +331,22 @@ class ParticleFilter(object):
         p = PoseStamped(header=Header(stamp=msg.header.stamp,
                                       frame_id=self.base_frame),
                         pose=Pose())
+        # grab from listener & store the the odometry pose in a more convenient format (x,y,theta)
         self.odom_pose = self.tf_listener.transformPose(self.odom_frame, p)
-        # store the the odometry pose in a more convenient format (x,y,theta)
         new_odom_xy_theta = self.transform_helper.convert_pose_to_xy_and_theta(self.odom_pose.pose)
         if not self.current_odom_xy_theta:
             self.current_odom_xy_theta = new_odom_xy_theta
             return
 
+
+        # Now we've done all calcs, we exit the scan_recieved() method by either initializing a cloud 
         if not(self.particle_cloud):
             # now that we have all of the necessary transforms we can update the particle cloud
+            # TODO: Where do we get the xy_theta needed for initialize_particle_cloud? 
+
             self.initialize_particle_cloud(msg.header.stamp)
+
+        
         elif (math.fabs(new_odom_xy_theta[0] - self.current_odom_xy_theta[0]) > self.d_thresh or
               math.fabs(new_odom_xy_theta[1] - self.current_odom_xy_theta[1]) > self.d_thresh or
               math.fabs(new_odom_xy_theta[2] - self.current_odom_xy_theta[2]) > self.a_thresh):
@@ -292,7 +354,7 @@ class ParticleFilter(object):
             self.update_particles_with_odom(msg)    # update based on odometry
             print("UPDATED PARTICLES VIA ODOM")
         #
-        #     self.update_particles_with_laser(msg)   # update based on laser scan
+            self.update_particles_with_laser(msg)   # update based on laser scan
         #    self.update_robot_pose(msg.header.stamp)                # update robot's pose
         #     self.resample_particles()               # resample particles to focus on areas of high density
         # # publish particles (so things like rviz can see them)
