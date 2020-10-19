@@ -25,6 +25,7 @@ class Particle(object):
         self.x = x
         self.y = y
         self.theta = theta
+        self.occ_scan_mapped = []
 
     def as_pose(self):
         # Returns particle as Pose object
@@ -56,6 +57,7 @@ class ParticleFilter(object):
         self.odom_frame = "odom"  # the name of the odometry coordinate frame
         self.scan_topic = "scan"  # the topic where we will get laser scans from
         self.best_guess = (None, None) # (index of particle with highest weight, its weight)
+        self.particles_to_replace = .30
 
         # pose_listener responds to selection of a new approximate robot
         # location (for instance using rviz)
@@ -248,55 +250,88 @@ class ParticleFilter(object):
         # 
 
         # handle case where lidar points are empty  
-        if all(isnan(v) for v in msg.ranges):
-            return 
-        lidar_points = list(filter((0.0).__ne__, msg.ranges))
-        print(lidar_points)
-        closest_lidar = (argmin(lidar_points),deg2rad(argmin(lidar_points)), min(lidar_points))
-        weights = []
+        if all(v==0.0 for v in msg.ranges):
+            return # TODO: handle this case better
+
+        lidar_points = msg.ranges
+        
         for p in self.particle_cloud:
             # do we need to compute particle pos in diff frame? 
-            closest_occ = self.occupancy_field.get_closest_obstacle_distance(p.x, p.y)
+            i = 0
+            p.occ_scan_mapped = [] # reset list 
+            for scan_distance in lidar_points: 
+                # handle edge case
+                if scan_distance == 0.0: 
+                    i += 1
+                    continue
+                # calc a delta theta and use that to overlay scan data onto the particle headings
+                pt_rad = deg2rad(i)
+                particle_pt_theta = self.transform_helper.angle_normalize(p.theta + pt_rad)
+                particle_pt_x = p.x + math.cos(particle_pt_theta)*scan_distance
+                particle_pt_y = p.y + math.cos(particle_pt_theta)*scan_distance
+                # calculate distance from every single scan point in particle frame
+                occ_value = self.occupancy_field.get_closest_obstacle_distance(particle_pt_x, particle_pt_y) 
+                # Think about cutting off max penalty if occ_value is too big 
+                p.occ_scan_mapped.append(occ_value)
+                i += 1
 
-            # print("closest occ: ", closest_occ, "deg, rad, closest_val:", closest_lidar)
-
-            # assign weights based off of difference from closest values
-            weights.append(1/abs(closest_lidar[1]-closest_occ))
-
-
-        weights = list(map((lambda x: x/sum(weights)), weights))
-        # you could do the below in 1 line
-        i = 0
-        for p in self.particle_cloud: 
-            p.w = weights[i]
-            i += 1
+            # assign weights based off newly assigned occ_scan_mapped 
+            # apply gaussian e**-d**2 to every weight, then cube to emphasize
+            p.occ_scan_mapped = [(math.e/(d)**2) for d in p.occ_scan_mapped]
+            p.occ_scan_mapped = [d**3 for d in p.occ_scan_mapped]
+            p.w = sum(p.occ_scan_mapped)
+            p.occ_scan_mapped = []
+        
+        self.normalize_particles()
 
         # setting up some vars for the future
-        self.w_thresh = sum(weights)/len(weights) * 1.2 # calculate a new weight threshold
-        self.best_guess = (argmax(weights), max(weights)) # (index of particle with highest weight, its weight)
-        print(self.best_guess)
 
+
+    @staticmethod
+    def draw_random_sample(choices, probabilities, n):
+        """ Return a random sample of n elements from the set choices with the specified probabilities
+            choices: the values to sample from represented as a list
+            probabilities: the probability of selecting each element in choices represented as a list
+            n: the number of samples
+        """
+        values = np.array(range(len(choices)))
+        probs = np.array(probabilities)
+        bins = np.add.accumulate(probs)
+        inds = values[np.digitize(random_sample(n), bins)]
+        samples = []
+        for i in inds:
+            samples.append(deepcopy(choices[int(i)]))
+        return samples
         
+ 
     def resample_particles(self):
         """
         Re initialize particles in self.particle_cloud 
         based on weightages
         """
-        x_best_guess = self.particle_cloud[self.best_guess[0]].x
-        y_best_guess = self.particle_cloud[self.best_guess[0]].y
-        theta_best_guess = self.particle_cloud[self.best_guess[0]].theta
-        for p in self.particle_cloud: 
-            # recreate particle and incorporate noise if
-            # it's weight is less than threshold 
-            if p.w > self.w_thresh: 
-                continue
-            else: 
-                # TODO: recreate around max particle vals but introduce noise
-                p = Particle(x=x_best_guess,y=y_best_guess,theta=theta_best_guess,w=0.0)
-                
+        weights = [p.w for p in self.particle_cloud]
+        temp_particle_cloud = self.draw_random_sample(self.particle_cloud,weights, (1-self.particles_to_replace)*self.num_particles)
+        particle_cloud_to_transform = self.draw_random_sample(self.particle_cloud,weights, (self.particles_to_replace)*self.num_particles)
+        
+        # NOISE POLLUTION
+        normal_std_xy = .1
+        normal_std_theta = math.pi/48
+        random_vals_x = np.random.normal(0, normal_std_xy, len(particle_cloud_to_transform))
+        random_vals_y = np.random.normal(0, normal_std_xy, len(particle_cloud_to_transform))
+        random_vals_theta = np.random.normal(0, normal_std_theta, len(particle_cloud_to_transform))
+        i = 0
+        for p in particle_cloud_to_transform: 
+            p.x += random_vals_x[i]
+            p.y += random_vals_y[i]
+            p.theta += random_vals_theta[i]
+            
+            i += 1
 
-        self.normalize_particles() # clear all weights? not actually useful
-
+        # reset the partilce cloud based on the newly transformed particles
+        self.particle_cloud = temp_particle_cloud.extend(particle_cloud_to_transform)
+        
+       
+        
     def scan_received(self, msg): 
         """
         Callback to recieve laser scan - should pass data into global scan object
