@@ -52,7 +52,7 @@ class ParticleFilter(object):
     def __init__(self):
         rospy.init_node('pf')
         self.initialized = False
-        self.num_particles = 150
+        self.num_particles = 200
         self.d_thresh = 0.2  # the amount of linear movement before performing an update
         self.a_thresh = math.pi / 6  # the amount of angular movement before performing an update
         self.particle_cloud = []
@@ -100,15 +100,15 @@ class ParticleFilter(object):
         # Use the helper functions to fix the transform
     def initialize_particle_cloud(self, timestamp, xy_theta):
         self.particle_cloud = []
-        angle_variance = math.pi/12  # POint the points in the general direction of the robot
+        angle_variance = math.pi/10  # POint the points in the general direction of the robot
         x_cur = xy_theta[0]
         y_cur = xy_theta[1]
         theta_cur = self.transform_helper.angle_normalize(xy_theta[2])
         # print("theta_cur: ", theta_cur)
         for i in range(self.num_particles):
             # Generate values for and add a new particle!!
-            x_rel = random.uniform(-.25, .25)
-            y_rel = random.uniform(-.25, .25)
+            x_rel = random.uniform(-.3, .3)
+            y_rel = random.uniform(-.3, .3)
             new_theta = (random.uniform(theta_cur-angle_variance, theta_cur+angle_variance))
             # TODO: Could use a tf transform to add x and y in the robot's coordinate system
             new_particle = Particle(x_cur+x_rel, y_cur+y_rel, new_theta)
@@ -162,13 +162,6 @@ class ParticleFilter(object):
         # # create new particle representing weighted average values, pass in Pose to new robot pose
         self.robot_pose = Particle(average_x,average_y, average_theta).as_pose()
 
-        # doing shit based off best pose
-        # best_pose_quat = max(self.particle_cloud, key=attrgetter('w')).as_pose()
-        # print("Best pose", best_pose_quat) 
-        # this is out of the map frame, can we apply to particle frame
-        # self.robot_pose = best_pose_quat
-        # print("highest weight, average weight: ", best_pose_quat, average_particle_pose)
-
         print(timestamp)
         self.transform_helper.fix_map_to_odom_transform(self.robot_pose, timestamp)
         print("Done fixing map to odom")
@@ -186,9 +179,7 @@ class ParticleFilter(object):
 
         # doing shit based off best pose
         best_pose_quat = max(self.particle_cloud, key=attrgetter('w')).as_pose()
-        print("Best pose", best_pose_quat)
-        self.best_particle_pub.publish(header=Header(stamp=rospy.Time.now(),
-                                       frame_id=self.map_frame), pose=best_pose_quat)
+        #self.best_particle_pub.publish(header=Header(stamp=rospy.Time.now(), frame_id=self.map_frame), pose=best_pose_quat)
 
     def update_particles_with_odom(self, msg):
         """ Update the particles using the newly given odometry pose.
@@ -205,19 +196,6 @@ class ParticleFilter(object):
                      new_odom_xy_theta[1] - self.current_odom_xy_theta[1],
                      new_odom_xy_theta[2] - self.current_odom_xy_theta[2])
 
-            delta_pose = Particle(delta[0], delta[1], delta[2]).as_pose()
-
-            # calculate difference in angle between new and old robot pos
-            ####ang_of_dest = math.atan2(delta[1], delta[0])
-            # calculate angle needed to turn in angle_to_dest
-            ####ang_to_dest = self.transform_helper.angle_diff(self.current_odom_xy_theta[2], ang_of_dest)
-            #print("moved x: ", delta[0])
-            #print("moved y: ", delta[1])
-            #print("Curr", self.current_odom_xy_theta[2], "Dest",ang_of_dest)
-            #print("ANGLE TO TURN: ",ang_to_dest, "\n")
-
-            d = math.sqrt(delta[0]**2 + delta[1]**2)
-            #print("Distance: ", d)
             self.current_odom_xy_theta = new_odom_xy_theta
         else:
             self.current_odom_xy_theta = new_odom_xy_theta
@@ -225,27 +203,20 @@ class ParticleFilter(object):
 
         # TODO: FIX noise incorporation into movement.
 
-        # min_travel = 0.2
-        # forward_spread = 0.012 / min_travel  # More variance with driving forward
-        # side_spread = 0.006 / min_travel  # not much side to side movement
-        # normal_std_theta = .01 / min_travel
+        min_travel = 0.2
+        xy_spread = 0.02 / min_travel  # More variance with driving forward
+        theta_spread = .005 / min_travel
 
-        # random_vals_x = np.random.normal(0, abs(d * forward_spread), self.num_particles)
-        # random_vals_y = np.random.normal(0, abs(d * side_spread), self.num_particles)
-        # # Variances in x and y of the distance^^
-        # random_vals_theta = np.random.normal(0, abs(delta[2] * normal_std_theta), self.num_particles)
+        random_vals_x = np.random.normal(0, abs(delta[0]*xy_spread), self.num_particles)
+        random_vals_y = np.random.normal(0, abs(delta[1]*xy_spread), self.num_particles)
+        random_vals_theta = np.random.normal(0, abs(delta[2] * theta_spread), self.num_particles)
 
         for p_num, p in enumerate(self.particle_cloud):
             # compute phi, or basically the angle from 0 that the particle
             # needs to be moving - phi equals OG diff angle - robot angle + OG partilce angle
             # ADD THE NOISE!!
-            # TODO: Wtf is this angle normalize
-            # noisy_x = (delta[0] + random_vals_x[p_num])
-            # noisy_y = (delta[1] + random_vals_y[p_num]) 
-
-            noisy_x = (delta[0])
-            noisy_y = (delta[1]) 
-            # print('wtf x: ',self.transform_helper.angle_normalize(delta[0] + random_vals_x[p_num]), 'expected x: ', (delta[0] + random_vals_x[p_num]))
+            noisy_x = (delta[0] + random_vals_x[p_num])
+            noisy_y = (delta[1] + random_vals_y[p_num])
 
             ang_of_dest = math.atan2(noisy_y, noisy_x)
             # calculate angle needed to turn in angle_to_dest
@@ -255,8 +226,7 @@ class ParticleFilter(object):
             phi = p.theta+ang_to_dest
             p.x += math.cos(phi) * d
             p.y += math.sin(phi) * d
-            # p.theta += self.transform_helper.angle_normalize(delta[2] + random_vals_theta[p_num])
-            p.theta += self.transform_helper.angle_normalize(delta[2])
+            p.theta += self.transform_helper.angle_normalize(delta[2] + random_vals_theta[p_num])
 
         self.current_odom_xy_theta = new_odom_xy_theta
 
@@ -335,19 +305,17 @@ class ParticleFilter(object):
         
         # NOISE POLLUTION - larger noise, smaller # particles
         # normal_std_xy = .25
-        normal_std_xy = 7/self.n_effective # feedback loop? 8,3
-        normal_std_theta = 2.5/self.n_effective
+        normal_std_xy = 10/self.n_effective # feedback loop? 8,3
+        normal_std_theta = 3/self.n_effective
         # normal_std_theta = math.pi/21
         random_vals_x = np.random.normal(0, normal_std_xy, len(particle_cloud_to_transform))
         random_vals_y = np.random.normal(0, normal_std_xy, len(particle_cloud_to_transform))
         random_vals_theta = np.random.normal(0, normal_std_theta, len(particle_cloud_to_transform))
 
-        i = 0
-        for p in particle_cloud_to_transform: # add in noise in x,y, theta
-            p.x += random_vals_x[i]
-            p.y += random_vals_y[i]
-            p.theta += random_vals_theta[i]
-            i += 1
+        for p_num , p in enumerate(particle_cloud_to_transform): # add in noise in x,y, theta
+            p.x += random_vals_x[p_num]
+            p.y += random_vals_y[p_num]
+            p.theta += random_vals_theta[p_num]
 
         # reset the partilce cloud based on the newly transformed particles
         self.particle_cloud = temp_particle_cloud + particle_cloud_to_transform        
@@ -394,7 +362,7 @@ class ParticleFilter(object):
         if not(self.particle_cloud):
             # now that we have all of the necessary transforms we can update the particle cloud
             # TODO: Where do we get the xy_theta needed for initialize_particle_cloud?
-            self.initialize_particle_cloud(msg.header.stamp)
+            self.initialize_particle_cloud(msg.header.stamp, self.current_odom_xy_theta)
 
         
         elif (math.fabs(new_odom_xy_theta[0] - self.current_odom_xy_theta[0]) > self.d_thresh or
