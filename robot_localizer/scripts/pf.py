@@ -65,7 +65,7 @@ class ParticleFilter(object):
         self.scan_topic = "scan"  # the topic where we will get laser scans from
         self.best_guess = (None, None) # (index of particle with highest weight, its weight)
         self.particles_to_replace = .075
-        self.n_effective = 
+        self.n_effective = 0 # this is a measure of the particle diversity
 
         # pose_listener responds to selection of a new approximate robot
         # location (for instance using rviz)
@@ -298,7 +298,6 @@ class ParticleFilter(object):
             p.occ_scan_mapped = []
         self.normalize_particles()
 
-
     @staticmethod
     def draw_random_sample(choices, probabilities, n):
         """ Return a random sample of n elements from the set choices with the specified probabilities
@@ -322,15 +321,23 @@ class ParticleFilter(object):
         based on weightages
         """
         weights = [p.w for p in self.particle_cloud]
-        #print("Weights!!", weights)
+
+        # after calculating all particle weights, we want to calc the n_effective
+        # self.n_effective = 0
+        self.n_effective = 1/ sum([w**2 for w in weights]) # higher is more diversity, so less noise
+        print("n_effective: ", self.n_effective)
+        
+
         temp_particle_cloud = self.draw_random_sample(self.particle_cloud, weights, int((1-self.particles_to_replace)*self.num_particles))
         # temp_particle_cloud = self.draw_random_sample(self.particle_cloud, weights, self.num_particles)
         
         particle_cloud_to_transform = self.draw_random_sample(self.particle_cloud,weights, self.num_particles - int((1-self.particles_to_replace)*self.num_particles))
         
         # NOISE POLLUTION - larger noise, smaller # particles
-        normal_std_xy = .25
-        normal_std_theta = math.pi/21
+        # normal_std_xy = .25
+        normal_std_xy = 7/self.n_effective # feedback loop? 8,3
+        normal_std_theta = 2.5/self.n_effective
+        # normal_std_theta = math.pi/21
         random_vals_x = np.random.normal(0, normal_std_xy, len(particle_cloud_to_transform))
         random_vals_y = np.random.normal(0, normal_std_xy, len(particle_cloud_to_transform))
         random_vals_theta = np.random.normal(0, normal_std_theta, len(particle_cloud_to_transform))
