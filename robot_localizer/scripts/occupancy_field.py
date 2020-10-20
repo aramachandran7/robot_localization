@@ -50,37 +50,60 @@ class OccupancyField(object):
                     occupied[curr, 0] = float(i)
                     occupied[curr, 1] = float(j)
                     curr += 1
-
         # use super fast scikit learn nearest neighbor algorithm
         nbrs = NearestNeighbors(n_neighbors=1,
                                 algorithm="ball_tree").fit(occupied)
         distances, indices = nbrs.kneighbors(X)
 
-        self.closest_occ = {}
+        self.closest_occ = np.zeros((self.map.info.width, self.map.info.height))
         curr = 0
         for i in range(self.map.info.width):
             for j in range(self.map.info.height):
-                ind = i + j*self.map.info.width
-                self.closest_occ[ind] = \
+                self.closest_occ[i, j] = \
                     distances[curr][0]*self.map.info.resolution
                 curr += 1
+        self.occupied = occupied
+
+    def get_obstacle_bounding_box(self):
+        """
+        Returns: the upper and lower bounds of x and y such that the resultant
+        bounding box contains all of the obstacles in the map.  The format of
+        the return value is ((x_lower, x_upper), (y_lower, y_upper))
+        """
+        lower_bounds = self.occupied.min(axis=0)
+        upper_bounds = self.occupied.max(axis=0)
+        r = self.map.info.resolution
+        return ((lower_bounds[0]*r + self.map.info.origin.position.x,
+                 upper_bounds[0]*r + self.map.info.origin.position.x),
+                (lower_bounds[1]*r + self.map.info.origin.position.y,
+                 upper_bounds[1]*r + self.map.info.origin.position.y))
 
     def get_closest_obstacle_distance(self, x, y):
         """ Compute the closest obstacle to the specified (x,y) coordinate in
             the map.  If the (x,y) coordinate is out of the map boundaries, nan
             will be returned. """
-        x_coord = \
-            int((x - self.map.info.origin.position.x)/self.map.info.resolution)
-        y_coord = \
-            int((y - self.map.info.origin.position.y)/self.map.info.resolution)
+        x_coord = (x - self.map.info.origin.position.x)/self.map.info.resolution
+        y_coord = (y - self.map.info.origin.position.y)/self.map.info.resolution
+        if type(x) is np.ndarray:
+            x_coord = x_coord.astype(np.int)
+            y_coord = y_coord.astype(np.int)
+        else:
+            x_coord = int(x_coord)
+            y_coord = int(y_coord)
 
-        # check if we are in bounds
-        if x_coord > self.map.info.width or x_coord < 0:
-            return float('nan')
-        if y_coord > self.map.info.height or y_coord < 0:
-            return float('nan')
+        is_valid = (x_coord >= 0) & (y_coord >= 0) & (x_coord < self.map.info.width) & (y_coord < self.map.info.height)
+        if type(x) is np.ndarray:
+            distances = np.float('nan')*np.ones(x_coord.shape)
+            distances[is_valid] = self.closest_occ[x_coord[is_valid], y_coord[is_valid]]
+            return distances
+        else:
+            return self.closest_occ[x_coord, y_coord] if is_valid else float('nan')
 
-        ind = x_coord + y_coord*self.map.info.width
-        if ind >= self.map.info.width*self.map.info.height or ind < 0:
-            return float('nan')
-        return self.closest_occ[ind]
+if __name__ == '__main__':
+    occ = OccupancyField()
+    X = 10*np.random.randn(100,2)
+    # append a point that is likely outside the map
+    X = np.vstack((X,[100, 50]))
+    print(occ.get_closest_obstacle_distance(X[:,0], X[:,1]))
+    print(occ.get_closest_obstacle_distance(50, 50))
+    print(occ.get_closest_obstacle_distance(2, 1))
