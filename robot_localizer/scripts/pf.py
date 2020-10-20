@@ -64,7 +64,8 @@ class ParticleFilter(object):
         self.odom_frame = "odom"  # the name of the odometry coordinate frame
         self.scan_topic = "scan"  # the topic where we will get laser scans from
         self.best_guess = (None, None) # (index of particle with highest weight, its weight)
-        self.particles_to_replace = .15
+        self.particles_to_replace = .075
+        self.n_effective = 
 
         # pose_listener responds to selection of a new approximate robot
         # location (for instance using rviz)
@@ -125,21 +126,7 @@ class ParticleFilter(object):
         # if your weights aren't normalized then normalize them
         if total_weights != 1.0:
             for i in self.particle_cloud:
-                i.w = i.w/total_weights
-
-    # def calculate_weights(self):    
-    #     """
-    #     Calculate particle weights based off of euclidean distance  
-    #     """
-    #     # walk through all particles, set weight based off distance to closest obstacle vs distance to closest lidar point
-    #     for p in self.particle_cloud:
-    #         for lp in self.lidar_points:
-                
-    #             closest = self.occupancy_field.get_closest_obstacle_distance(p.x, p.y)
-    #             # TODO handle NaN return
-    #             print("closest from occ_field: ", closest)
-    #             p.w = 1 / self.calculate_min_distance(closest)
-    #             print(p.w)                
+                i.w = i.w/total_weights              
 
     def update_robot_pose(self, timestamp):
         """ Update the estimate of the robot's pose in the map frame given the updated particles.
@@ -152,6 +139,14 @@ class ParticleFilter(object):
         print("Normalized particles in update robot pose")
         # TODO: assign the latest pose into self.robot_pose as a geometry_msgs.Pose object
         # just to get started we will fix the robot's pose to always be at the origin
+        
+
+        # # create average pose for robot pose based on weighted top 10 values 
+        # total_weights = sum([particle.w for particle in self.particle_cloud])
+        # # if your weights aren't normalized then normalize them
+        # if total_weights != 1.0:
+        #     for i in self.particle_cloud:
+        #         i.w = i.w/total_weights 
 
         average_x = 0
         average_y = 0
@@ -161,13 +156,19 @@ class ParticleFilter(object):
             average_x += p.x * p.w
             average_y += p.y * p.w
             average_theta += p.theta * p.w
-            # print("theta", p.theta)
-        print("average x,y,theta: ", average_x, average_y, average_theta)
+        #     # print("theta", p.theta)
+        # print("average x,y,theta: ", average_x, average_y, average_theta)
 
-        # create new particle representing weighted average values, pass in Pose to new robot pose
-        average_particle = Particle(average_x,average_y, average_theta)
-        self.robot_pose = average_particle.as_pose()
-        print("set robot pose to", self.robot_pose)
+        # # create new particle representing weighted average values, pass in Pose to new robot pose
+        self.robot_pose = Particle(average_x,average_y, average_theta).as_pose()
+
+        # doing shit based off best pose
+        # best_pose_quat = max(self.particle_cloud, key=attrgetter('w')).as_pose()
+        # print("Best pose", best_pose_quat) 
+        # this is out of the map frame, can we apply to particle frame
+        # self.robot_pose = best_pose_quat
+        # print("highest weight, average weight: ", best_pose_quat, average_particle_pose)
+
         print(timestamp)
         self.transform_helper.fix_map_to_odom_transform(self.robot_pose, timestamp)
         print("Done fixing map to odom")
@@ -323,26 +324,26 @@ class ParticleFilter(object):
         weights = [p.w for p in self.particle_cloud]
         #print("Weights!!", weights)
         temp_particle_cloud = self.draw_random_sample(self.particle_cloud, weights, int((1-self.particles_to_replace)*self.num_particles))
+        # temp_particle_cloud = self.draw_random_sample(self.particle_cloud, weights, self.num_particles)
+        
         particle_cloud_to_transform = self.draw_random_sample(self.particle_cloud,weights, self.num_particles - int((1-self.particles_to_replace)*self.num_particles))
-
-        # NOISE POLLUTION
-        normal_std_xy = .2
-        normal_std_theta = math.pi/24
+        
+        # NOISE POLLUTION - larger noise, smaller # particles
+        normal_std_xy = .25
+        normal_std_theta = math.pi/21
         random_vals_x = np.random.normal(0, normal_std_xy, len(particle_cloud_to_transform))
         random_vals_y = np.random.normal(0, normal_std_xy, len(particle_cloud_to_transform))
         random_vals_theta = np.random.normal(0, normal_std_theta, len(particle_cloud_to_transform))
 
         i = 0
-        for p in particle_cloud_to_transform: 
+        for p in particle_cloud_to_transform: # add in noise in x,y, theta
             p.x += random_vals_x[i]
             p.y += random_vals_y[i]
             p.theta += random_vals_theta[i]
             i += 1
 
         # reset the partilce cloud based on the newly transformed particles
-        self.particle_cloud = temp_particle_cloud + particle_cloud_to_transform
-        #print("PARTICELS CLOUD",self.particle_cloud)
-        
+        self.particle_cloud = temp_particle_cloud + particle_cloud_to_transform        
        
         
     def scan_received(self, msg): 
