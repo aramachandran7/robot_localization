@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 
-""" This is the starter code for the robot localization project """
+""" Shit to try : 
+eliminate noise from odom movement 
+try setting robot pose based off best_guess instead of average weight of all p's
+
+"""
 import rospy
 
 from std_msgs.msg import Header, String
@@ -178,6 +182,8 @@ class ParticleFilter(object):
                                             frame_id=self.map_frame),
                                   poses=pose_particle_cloud))
 
+
+        # doing shit based off best pose
         best_pose_quat = max(self.particle_cloud, key=attrgetter('w')).as_pose()
         print("Best pose", best_pose_quat)
         self.best_particle_pub.publish(header=Header(stamp=rospy.Time.now(),
@@ -216,24 +222,29 @@ class ParticleFilter(object):
             self.current_odom_xy_theta = new_odom_xy_theta
             return
 
-        # TODO: Incorportate noise into movement.
+        # TODO: FIX noise incorporation into movement.
 
-        min_travel = 0.2
-        forward_spread = 0.012 / min_travel  # More variance with driving forward
-        side_spread = 0.006 / min_travel  # not much side to side movement
-        normal_std_theta = .01 / min_travel
+        # min_travel = 0.2
+        # forward_spread = 0.012 / min_travel  # More variance with driving forward
+        # side_spread = 0.006 / min_travel  # not much side to side movement
+        # normal_std_theta = .01 / min_travel
 
-        random_vals_x = np.random.normal(0, abs(d * forward_spread), self.num_particles)
-        random_vals_y = np.random.normal(0, abs(d * side_spread), self.num_particles)
-        # Variances in x and y of the distance^^
-        random_vals_theta = np.random.normal(0, abs(delta[2] * normal_std_theta), self.num_particles)
+        # random_vals_x = np.random.normal(0, abs(d * forward_spread), self.num_particles)
+        # random_vals_y = np.random.normal(0, abs(d * side_spread), self.num_particles)
+        # # Variances in x and y of the distance^^
+        # random_vals_theta = np.random.normal(0, abs(delta[2] * normal_std_theta), self.num_particles)
 
         for p_num, p in enumerate(self.particle_cloud):
             # compute phi, or basically the angle from 0 that the particle
             # needs to be moving - phi equals OG diff angle - robot angle + OG partilce angle
             # ADD THE NOISE!!
-            noisy_x = self.transform_helper.angle_normalize(delta[0] + random_vals_x[p_num])
-            noisy_y = self.transform_helper.angle_normalize(delta[1] + random_vals_y[p_num])
+            # TODO: Wtf is this angle normalize
+            # noisy_x = (delta[0] + random_vals_x[p_num])
+            # noisy_y = (delta[1] + random_vals_y[p_num]) 
+
+            noisy_x = (delta[0])
+            noisy_y = (delta[1]) 
+            # print('wtf x: ',self.transform_helper.angle_normalize(delta[0] + random_vals_x[p_num]), 'expected x: ', (delta[0] + random_vals_x[p_num]))
 
             ang_of_dest = math.atan2(noisy_y, noisy_x)
             # calculate angle needed to turn in angle_to_dest
@@ -243,7 +254,9 @@ class ParticleFilter(object):
             phi = p.theta+ang_to_dest
             p.x += math.cos(phi) * d
             p.y += math.sin(phi) * d
-            p.theta += self.transform_helper.angle_normalize(delta[2] + random_vals_theta[p_num])
+            # p.theta += self.transform_helper.angle_normalize(delta[2] + random_vals_theta[p_num])
+            p.theta += self.transform_helper.angle_normalize(delta[2])
+
         self.current_odom_xy_theta = new_odom_xy_theta
 
     def update_particles_with_laser(self, msg):
