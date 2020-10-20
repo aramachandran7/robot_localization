@@ -2,11 +2,23 @@
 This is the base repo for the Olin Computational Robotics Robot Localization project
 [implmentation plan](https://docs.google.com/document/d/1mB6ZcDd3plx7cEjVnaAYTViUkcwxzIZIshAOJEAcZzs/edit?usp=sharing)
 
-# Todo
-- Validate weight calculation
-- Add noise to motor model (Update particle via odom)
-- Resampling of particles
-- Redistribution of particles (Use gaussian to cluster around others)
-- move robot to weighted center of particles (put robot on your best guess, hopefully the red arrow)
+
+
+# Todo Writeup
+- __RECORD BAG FILES IN ACTION__
+
+
+
 - Clean up update via odom
 - Writeup!!!!
+
+
+
+### Intro
+
+
+### Goal of Project
+
+###Implementation Strategy
+
+_Design Decicion_ (starting articles in a grid not a circle)

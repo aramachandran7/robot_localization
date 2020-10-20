@@ -8,6 +8,7 @@ from sensor_msgs.msg import LaserScan, PointCloud
 from helper_functions import TFHelper
 import random
 from copy import deepcopy
+from operator import attrgetter
 
 from occupancy_field import OccupancyField
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, PoseArray, Pose, Point, Quaternion
@@ -47,21 +48,19 @@ class ParticleFilter(object):
     def __init__(self):
         rospy.init_node('pf')
         self.initialized = False
-        self.num_particles = 300
+        self.num_particles = 150
         self.d_thresh = 0.2  # the amount of linear movement before performing an update
         self.a_thresh = math.pi / 6  # the amount of angular movement before performing an update
-        self.w_thresh = .2 # the minimum weight required for a particle to be 'kept' 
         self.particle_cloud = []
-        self.lidar_grab_range = 30
         self.lidar_points = []
-        self.closest_lidar = (None, None)
-        self.particle_pub = rospy.Publisher("particlecloud", PoseArray, queue_size=10) 
+        self.particle_pub = rospy.Publisher("particlecloud", PoseArray, queue_size=10)
+        self.best_particle_pub = rospy.Publisher("particlebest", PoseStamped, queue_size=10)
         self.base_frame = "base_link"  # the frame of the robot base
         self.map_frame = "map"  # the name of the map coordinate frame
         self.odom_frame = "odom"  # the name of the odometry coordinate frame
         self.scan_topic = "scan"  # the topic where we will get laser scans from
         self.best_guess = (None, None) # (index of particle with highest weight, its weight)
-        self.particles_to_replace = .10
+        self.particles_to_replace = .15
 
         # pose_listener responds to selection of a new approximate robot
         # location (for instance using rviz)
@@ -103,8 +102,8 @@ class ParticleFilter(object):
         # print("theta_cur: ", theta_cur)
         for i in range(self.num_particles):
             # Generate values for and add a new particle!!
-            x_rel = random.uniform(-.5, .5)
-            y_rel = random.uniform(-.5, .5)
+            x_rel = random.uniform(-.25, .25)
+            y_rel = random.uniform(-.25, .25)
             new_theta = (random.uniform(theta_cur-angle_variance, theta_cur+angle_variance))
             # TODO: Could use a tf transform to add x and y in the robot's coordinate system
             new_particle = Particle(x_cur+x_rel, y_cur+y_rel, new_theta)
@@ -179,6 +178,11 @@ class ParticleFilter(object):
                                             frame_id=self.map_frame),
                                   poses=pose_particle_cloud))
 
+        best_pose_quat = max(self.particle_cloud, key=attrgetter('w')).as_pose()
+        print("Best pose", best_pose_quat)
+        self.best_particle_pub.publish(header=Header(stamp=rospy.Time.now(),
+                                       frame_id=self.map_frame), pose=best_pose_quat)
+
     def update_particles_with_odom(self, msg):
         """ Update the particles using the newly given odometry pose.
             The function computes the value delta which is a tuple (x,y,theta)
@@ -215,18 +219,17 @@ class ParticleFilter(object):
         # TODO: Incorportate noise into movement.
 
         min_travel = 0.2
-        forward_spread = 0.006 / min_travel  # More variance with driving forward
-        side_spread = 0.003 / min_travel  # not much side to side movement
-        normal_std_theta = .005 / min_travel
+        forward_spread = 0.012 / min_travel  # More variance with driving forward
+        side_spread = 0.006 / min_travel  # not much side to side movement
+        normal_std_theta = .01 / min_travel
 
         random_vals_x = np.random.normal(0, abs(d * forward_spread), self.num_particles)
         random_vals_y = np.random.normal(0, abs(d * side_spread), self.num_particles)
         # Variances in x and y of the distance^^
         random_vals_theta = np.random.normal(0, abs(delta[2] * normal_std_theta), self.num_particles)
 
-        for p in self.particle_cloud:
-            p_num = self.particle_cloud.index(p)
-            # compute phi, or basically the angle from 0 that the particle 
+        for p_num, p in enumerate(self.particle_cloud):
+            # compute phi, or basically the angle from 0 that the particle
             # needs to be moving - phi equals OG diff angle - robot angle + OG partilce angle
             # ADD THE NOISE!!
             noisy_x = self.transform_helper.angle_normalize(delta[0] + random_vals_x[p_num])
@@ -255,25 +258,23 @@ class ParticleFilter(object):
         #     return # TODO: handle this case better
         lidar_points = msg.ranges
         
-        for p in self.particle_cloud:
-            # do we need to compute particle pos in diff frame? 
-            i = 0
+        for p_deg, p in enumerate(self.particle_cloud):
+            # do we need to compute particle pos in diff frame?
             p.occ_scan_mapped = [] # reset list 
             for scan_distance in lidar_points: 
                 # handle edge case
-                if scan_distance == 0.0: 
-                    i += 1
+                if scan_distance == 0.0:
                     continue
                 # calc a delta theta and use that to overlay scan data onto the particle headings
-                pt_rad = deg2rad(lidar_points.index(scan_distance))
+                pt_rad = deg2rad(p_deg)
                 particle_pt_theta = self.transform_helper.angle_normalize(p.theta + pt_rad)
                 particle_pt_x = p.x + math.cos(particle_pt_theta)*scan_distance
-                particle_pt_y = p.y + math.cos(particle_pt_theta)*scan_distance
+                particle_pt_y = p.y + math.sin(particle_pt_theta)*scan_distance
                 # calculate distance from every single scan point in particle frame
                 occ_value = self.occupancy_field.get_closest_obstacle_distance(particle_pt_x, particle_pt_y) 
                 # Think about cutting off max penalty if occ_value is too big 
                 p.occ_scan_mapped.append(occ_value)
-                i += 1
+
             # assign weights based off newly assigned occ_scan_mapped 
             # apply gaussian e**-d**2 to every weight, then cube to emphasize
             p.occ_scan_mapped = [(math.e/(d)**2) if (d)**2 != 0 else (math.e/(d+.01)**2) for d in p.occ_scan_mapped]
@@ -291,17 +292,13 @@ class ParticleFilter(object):
             probabilities: the probability of selecting each element in choices represented as a list
             n: the number of samples
         """
-        print("proababilities")
         values = np.array(range(len(choices)))
         probs = np.array(probabilities)
         bins = np.add.accumulate(probs)
-        print(type(bins), bins)
-        print(type(n), n)
         inds = values[np.digitize(random_sample(n), bins)]
         samples = []
         for i in inds:
             samples.append(deepcopy(choices[int(i)]))
-        print("RANDOM SAMPLE", samples)
         return samples
         
  
@@ -316,8 +313,8 @@ class ParticleFilter(object):
         particle_cloud_to_transform = self.draw_random_sample(self.particle_cloud,weights, self.num_particles - int((1-self.particles_to_replace)*self.num_particles))
 
         # NOISE POLLUTION
-        normal_std_xy = .1
-        normal_std_theta = math.pi/48
+        normal_std_xy = .2
+        normal_std_theta = math.pi/24
         random_vals_x = np.random.normal(0, normal_std_xy, len(particle_cloud_to_transform))
         random_vals_y = np.random.normal(0, normal_std_xy, len(particle_cloud_to_transform))
         random_vals_theta = np.random.normal(0, normal_std_theta, len(particle_cloud_to_transform))
