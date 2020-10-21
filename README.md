@@ -1,20 +1,30 @@
-# robot_localization
-This is the base repo for the Olin Computational Robotics Robot Localization project
-[implmentation plan](https://docs.google.com/document/d/1mB6ZcDd3plx7cEjVnaAYTViUkcwxzIZIshAOJEAcZzs/edit?usp=sharing)
+# Particle Filtering & Robot Localization 
+
+#### Adi & Nathan, 10-2020
+
+![inaction](/docs/pf_inaction.gif)
+
 
 ## Goals
-The goal of this project was to implement a particle filter algorithm in the context of robot localization. Our primary focus was learning: we wanted to write as much of the code ourselves as possible and understand the components of the codebase that we didn’t author. Our secondary goal was to have a useful particle filter that was powerful and accurate enough to be used in practice, and to incorporate some interesting experimental features along they way.
+The goal of this project was to implement a particle filter algorithm in the context of robot localization. Our primary focus throughout the entire project was learning: we wanted to write as much of the code ourselves as possible and understand the components of the codebase that we didn’t author. Our secondary goal was to have a useful particle filter that was powerful and accurate enough to be used in practice, and to incorporate some interesting experimental features along the way.
 
 __*What is a particle filter and why do we use it in the context of robot localization?*__
 
-A particle filter is going to be used as a method to update and obtain an accurate representation of where our robot is located in a __known__/mapped world.
+The objective of our software is to localize (or locate) our robot within a known physical context. In other words, using current robot sensor data and past motor movements (along with the associated probabilistic robot sensor and motor models), and using a map of the overall space, we seek to predict the robot’s current state - or it’s position in physical space. 
 
-This is accomplished by starting with a best guess of where the robot is at. We then make particles around that best guess that represent potential positions of the robot. Since the world has been mapped, the robot can take stock of its surroundings via lidar and compare those to a ground truth. The robot computes weights for each particle indicating how good of a match the lidar scan would be if the robot was at that position. These weights are then resampled so that the particles are centered around the more likely positions. 
+The naive approach to localization is via a discrete Bayes filter - here, we know there are n discrete states (or positions & orientations) our robot could be in. For every time step t, we simply compute the probability of our robot being in each one of these states, and pick the highest one. We’ll figure out, with a little math, that the time complexity of this computation is a simple O(N^2) - (AKA it’s really slow). 
 
-As this process goes on and the robot is moving, it is exposed to more surroundings that help those particles converge to an accurate representation of the position.
+We can take a few steps to shave this process down and save ourselves some pain. What if, instead of computing the probability of our robot being in every single state, we only computed the probability for a select group of states that’s more relevant? What if we used the robot’s sensor data and motor data to inform these possible states - and narrow them down even further? 
+
+We could consider each possible state (we’ll call these particles from now on) to be a possible robot position, and we could compare the robot’s current scan data with each particle, superimposed on the known map. Now, we know the likelihood or viability that each particle is actually where the robot is!
+
+As the robot moves through the map, we transpose each particle and recalculate weights based on the particle’s likelihood. Poor guesses at the robot’s position, or particles with lower weights, get cut out and resampled around the positions of particles with higher weights. Ultimately, as the process continues the robot is exposed to more surroundings that help its particles converge to an accurate representation of its position.
 
 ## An overview of our implementation 
-The implementation of a particle filter can be broken down into several steps that get repeated throughout time. Below is a high level explanation of our method. These steps assume that you understand the purpose of a particle filter, please read the above section if this is confusing.
+The implementation of a particle filter can be broken down into several steps that get repeated throughout time. Below is a block diagram & high level explanation how we specifically applied the filter. 
+
+![blockdiagram](/docs/bdv1.PNG)
+
 
 #### Initial setup 
 Initialize constants and parameters of the system
@@ -33,41 +43,50 @@ Create initial particle set around a known “best guess” pose
 
 As this process repeats the point cloud should converge onto the actual position of the robot. Changing parameters such as the amount of resampling done or the amount of noise injected changes how the particle filter behaves.
 
-__Here's a few clips of it in action!__
+__Here's a few more clips of it in action!__
 The large red arrow is the ground truth position of the robot. the small red arrows represent our particles, in theory if our filter is working they should stay relatively condensed arounf the larger red arrow. The white lines that move are the lidar scan of the robot superimposed onto the map.
-
-![inaction](/docs/pf_inaction.gif)
 
 ![working well](/docs/in_use.gif)
 
-Another map, this didn't work very well
+A smaller map where the PF performed worse
 
 ![not_so_good](/docs/not_so%20good.gif)
 
-This is the same map with a lower number of particles...
+The same map as above, with fewer total particles...
 
 ![working well](/docs/better)
 
 
-[include a sexy block diagram here] ADI
-
 #### Core design decisions explained (ADI COME THROUGH)
+- Running with pf.py
+- We wanted to fuck (challenge) ourselves 
+- Running with n_effective for noise calc
+- How do you  make sure you don’t go in blind when injecting noise>> calc variance score 
+- Explaining the weighted average resampling & for best_guess
+- Explaining how we calculate our weights
 
 ## Challenges
-We faced a lot of problems injecting noise and variability into our filter. These original problems stemmed from some logical errors within the code. However, after straightening those out we often ended up with an overly or not aggressive particle filter. To combat this we worked to fine tune parameters but even with these changes we were unable to get the desired accuracy. 
+In general, debugging the system came down to writing incremental bits of code / logic and testing as often as possible.  
 
-The other signficant challenge for us was keeping track of all of the coordinate systems. These are extremely difficult to conceptualize. Luckily the tf module takes care of a lot of the work behind the scenes. This was likely the largest conceptual hurdle for us to overcome.
+In particular, one significant challenge for us was keeping track of and jumping between the coordinate frames. The lidar scan, the robots in-built odometry, and the robot itself all live in different coordinate systems and must be transformed between. These are pretty tough to conceptualize. Luckily the tf module takes care of much of the work behind the scenes. This was likely the largest conceptual hurdle for us to overcome.
+
+Later in the project, we faced some issues injecting noise and variability into our filter. Even after rooting out some simple bugs, we realized that setting an appropriate noise level and ensuring a reasonable variation in the particles was no small feat, and required a ridiculous amount of fine-tuning. It was very easy to come out with an overly or not aggressive particle filter. We eventually switched to the n_effective method, which isn’t perfect but is an improvement. 
+
 
 ## Improvements
-Obviously this particle filter leaves some to be desired. It works decently when given a very good estimate and a good map. To improve its accuracy we have considered several things:
-- Vary the number of particles resampled based on their spread
-- Improve motor model/noise
-- Use more particles
+Obviously this particle filter leaves some to be desired. It works decently when given an accurate estimate and a clean map with time & patience to lock in its guess. 
+
+To improve performance, we’ve considered changes to the algorithm. However, one can imagine that most of these changes will result in marginal performance benefits at best. 
+
+- Vary the number of particles resampled based on their spread / diversity score
+- Improve motor model/noise injection 
+- Experiment with more particles
 - Faster timestep (more computationally intensive)
 - Detect if the particle cloud has diverged and work to resolve the divergence
 - Use a more versatile way of computing robot location than a weighted average of particle position
+- Implement SLAM yeet
+The goal of the above changes would be to produce a more accurate and usable particle filter. These changes are intended to be a list of ideas that warrant exploration rather than a prescribed set of instructions to a better filter.
 
-The goal of the above changes would be to produce a more accurate and usable particle filter. These changes are intended to be a list of ideas that warrant - exploration rather than a prescribed set of instructions to a better filter.
 
 ## Lessons Learned
 - This was the first time we were forced to use bag files. This was extremely powerful and made testing 1000 percent faster. This is something we will carry on to future projects where applicable.
