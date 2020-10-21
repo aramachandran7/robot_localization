@@ -21,25 +21,30 @@ We could consider each possible state (we’ll call these particles from now on)
 As the robot moves through the map, we transpose each particle and recalculate weights based on the particle’s likelihood. Poor guesses at the robot’s position, or particles with lower weights, get cut out and resampled around the positions of particles with higher weights. Ultimately, as the process continues the robot is exposed to more surroundings that help its particles converge to an accurate representation of its position.
 
 ## An overview of our implementation 
-The implementation of a particle filter can be broken down into several steps that get repeated throughout time. Below is a block diagram & high level explanation how we specifically applied the filter. 
+The implementation of our particle filter can be broken down into several steps that get repeated throughout time. Below is a block diagram & high level explanation how we specifically applied the filter. 
 
 ![blockdiagram](/docs/bdv1.PNG)
 
 
-#### Initial setup 
-Initialize constants and parameters of the system
-Create initial particle set around a known “best guess” pose
+### Some specifics of our setup 
+- Using ROS (Robot Operating System), RVIZ, and Python's ROS API to interact with a simulated NEATO robot
+- Using the Neato's default LIDAR scan data on the ROS /scan topic for sensor data, publishing our particles to the /particlecloud topic, and driving the Neato via the /cmd_vel topic 
+
+### Algorithm Walkthrough
+#### Setup
+Start by initializing system constants and parameters 
+Require user to drop a "best geuss" of the Neato's starting position. Create an initial particle set around that “best guess” pose. 
 
 #### As the robot moves
 - Map the robot’s movement onto each particle as if the robot was at each particle’s position
-- Add noise to compensate for the robot’s odometry inaccuracy
-- Scan the surroundings with the Lidar sensor
-- Project the lidar scan as if it was from each different particle pose
+- While translating particles, add noise to compensate for the robot’s odometry measurements - (the robot's motor model and onboard encoders aren't perfect)
+- Scan the surroundings with the LIDAR sensor
+- Project the lidar scan as if it were from each different particle pose
 - Assign a weight to each particle based on how similar the mapped scan is to the ground truth “map”
-- Sample 85% from the particle distribution with weights as probabilities, these particles are retained
-- Sample from the same distribution again, but modify this smaller subset to introduce variability (this variability is key in the event that our current particles don’t reflect the robot’s position)
-- If particles have condensed too much then add variability (this helps the particle filter work as error accumulates)
-- REPEAT
+- During particle resampling based off assigned weights, retain 85% of particles from the previous particle distribution, with their weights as probabilities of choice 
+- For the final 15%, sample from the same distribution, but inject noise for each particle position (this variability is key in the event that our current particles don’t reflect the robot’s position)
+- If particles have condensed too much then add variability - we'll cover this more in depth later! (This helps the particle filter continue to work as error accumulates)
+- Repeat indefinetly!
 
 As this process repeats the point cloud should converge onto the actual position of the robot. Changing parameters such as the amount of resampling done or the amount of noise injected changes how the particle filter behaves.
 
@@ -48,22 +53,31 @@ The large red arrow is the ground truth position of the robot. the small red arr
 
 ![working well](/docs/in_use.gif)
 
-A smaller map where the PF performed worse
+A smaller map where the PF performed worse: 
 
 ![not_so_good](/docs/not_so%20good.gif)
 
-The same map as above, with fewer total particles...
+The same map as above, with fewer total particles: 
 
 ![working well](/docs/better)
 
 
-#### Core design decisions explained (ADI COME THROUGH)
-- Running with pf.py
-- We wanted to fuck (challenge) ourselves 
-- Running with n_effective for noise calc
-- How do you  make sure you don’t go in blind when injecting noise>> calc variance score 
-- Explaining the weighted average resampling & for best_guess
-- Explaining how we calculate our weights
+## Our core design decisions, explained 
+#### Running with pf.py
+We chose the more sparse codebase over the scaffolded one offered to us, in the interest of learning from the ground up.  
+### How we calculated weights
+In order to quantify which partilces were 'better guesses' at the robot's state than others, we set each particle's weight using the Neato's LIDAR scan data. This can by walking through all particles, and for each particle, walking through each of the robot's LIDAR scan points projected to the particle's frame. From there, project this onto the actual map and determine the distance from the nearest actual obstacle. Append each distance to an array, with 1 array for each particle. 
+
+Apply a Gaussian 'squish' to each point, cube the result, and sum the entire thing to calculate one particle's weight (between 0 and 1). The result looks like `sum([((e/(d)**2))**3 for d in array])`. We settled on this weight calculation to heavily emphasize values of `d` closer to 0, and strongly diminish values of `d` higher than 1. 
+
+#### Using `n_effective` for dynamic noise injection
+Let's think about injecting noise into each particle during resmapling. How do you build a system that is aware of how varied or diverse its particles are, and one that can adjust how much noise it injects based on that 'diversity score'? In other words, how do you make sure you don’t go in blind when injecting noise?
+
+We use `n_effective` to store our calculated variance or diversity score of sorts. The more diverse our particles and the wider our spread, the better our system is at handling out of the ordinary edge cases - like if the robot were kicked, for example. (Note that we also want our particles to condense fairly well for an accurate best guess at the robot's position). 
+
+To calculate `n_effective`, we sum the square of each particle weight, and divide the result by 1. It looks a bit like `n_effective = 1 / sum([w**2 for w in weights])`. This model for `n_effective` grants your filter a higher score for a more diverse set of (possibly shitty) weights, and a lower score for a lot of low scores and couple high scores. 
+
+When injecting noise, the standard deviation of the Guassian noise (reference `numpy.random.normal`) is proportional to `1/n_effective`. This method has its downsides - it's directly dependant on the number of particles in the system, and must be finely tuned depending on the context in order for it to not 'over-prioritize' variation in particle positions. 
 
 ## Challenges
 In general, debugging the system came down to writing incremental bits of code / logic and testing as often as possible.  
@@ -73,20 +87,18 @@ In particular, one significant challenge for us was keeping track of and jumping
 Later in the project, we faced some issues injecting noise and variability into our filter. Even after rooting out some simple bugs, we realized that setting an appropriate noise level and ensuring a reasonable variation in the particles was no small feat, and required a ridiculous amount of fine-tuning. It was very easy to come out with an overly or not aggressive particle filter. We eventually switched to the n_effective method, which isn’t perfect but is an improvement. 
 
 
-## Improvements
-Obviously this particle filter leaves some to be desired. It works decently when given an accurate estimate and a clean map with time & patience to lock in its guess. 
+## Improvements for the future
+Obviously this particle filter leaves some to be desired. It works decently when given an accurate estimate and a clean map with time & patience to lock in its best guess of the robot's state. 
 
-To improve performance, we’ve considered changes to the algorithm. However, one can imagine that most of these changes will result in marginal performance benefits at best. 
+To improve performance, we’ve considered both some  minor adjustments and bigger picture changes to our algorithm. 
 
-- Vary the number of particles resampled based on their spread / diversity score
-- Improve motor model/noise injection 
-- Experiment with more particles
-- Faster timestep (more computationally intensive)
-- Detect if the particle cloud has diverged and work to resolve the divergence
-- Use a more versatile way of computing robot location than a weighted average of particle position
-- Implement SLAM yeet
-The goal of the above changes would be to produce a more accurate and usable particle filter. These changes are intended to be a list of ideas that warrant exploration rather than a prescribed set of instructions to a better filter.
-
+- Vary not only the noise, but the number of particles resampled based on the variance score `n_effective`
+- Improve and tune in motor model/noise injection 
+- Experiment with higher and lower numbers of particles depending on map characteristics 
+- Optimize code for memory and time complexity to enable a faster timestep 
+- Detect if the particle cloud has diverged and work to resolve the divergence using clustering algorithms
+- Experiment with a more versatile way of computing robot location than a weighted average of particle position
+The above  changes are intended to be a list of ideas that warrant exploration rather than a prescribed set of instructions to a better filter.
 
 ## Lessons Learned
 - This was the first time we were forced to use bag files. This was extremely powerful and made testing 1000 percent faster. This is something we will carry on to future projects where applicable.
