@@ -52,7 +52,7 @@ class ParticleFilter(object):
     def __init__(self):
         rospy.init_node('pf')
         self.initialized = False
-        self.num_particles = 200
+        self.num_particles = 150
         self.d_thresh = 0.2  # the amount of linear movement before performing an update
         self.a_thresh = math.pi / 6  # the amount of angular movement before performing an update
         self.particle_cloud = []
